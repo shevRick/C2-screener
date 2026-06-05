@@ -6,7 +6,6 @@ from datetime import datetime
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Auto Refresh
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="C2 Closure Screener", page_icon="📈", layout="wide")
@@ -25,14 +24,14 @@ with st.sidebar:
                        'ETHFI/USDT', 'W/USDT', 'HFT/USDT', 'SSV/USDT', 'ONDO/USDT']
     
     all_symbols = ['BTC/USDT', 'ETH/USDT', 'NEIRO/USDT', 'FLOKI/USDT', 'WLD/USDT', 
-                   'EPIC/USDT', 'ADA/USDT', 'AVAX/USDT', 'SUI/USDT',
-                   'ENA/USDT', 'AR/USDT', 'SUSHI/USDT', 'JTO/USDT', 'VVV/USDT', 
-                   'MEME/USDT', 'SPX/USDT', 'GRASS/USDT', 'ORDI/USDT',  'FET/USDT', 'DODOX/USDT', 'EIGEN/USDT',
-                   'ETHFI/USDT', 'W/USDT', 'HFT/USDT', 'SSV/USDT', 'ONDO/USDT']
+                    'EPIC/USDT', 'ADA/USDT', 'AVAX/USDT', 'SUI/USDT',
+                    'ENA/USDT', 'AR/USDT', 'SUSHI/USDT', 'JTO/USDT', 'VVV/USDT', 
+                    'MEME/USDT', 'SPX/USDT', 'GRASS/USDT', 'ORDI/USDT',  'FET/USDT', 'DODOX/USDT', 'EIGEN/USDT',
+                    'ETHFI/USDT', 'W/USDT', 'HFT/USDT', 'SSV/USDT', 'ONDO/USDT']
     
     selected_symbols = st.multiselect("Select Coins", options=all_symbols, default=default_symbols)
     
-    timeframes = st.multiselect("Timeframes", options=['1d', '4h', '1w'], default=['1d', '4h', '1w'])
+    timeframes = st.multiselect("Timeframes", options=['1d', '4h', '1w'], default=['1d', '4h'])
     
     min_sweep = st.slider("Minimum Sweep %", 5, 50, 10, step=5) / 100.0
     refresh_interval = st.slider("Auto-refresh every (minutes)", 3, 15, 5)
@@ -43,10 +42,8 @@ with st.sidebar:
     with col2:
         st.info("Auto-refresh is ON")
 
-# Auto Refresh Trigger
 st_autorefresh(interval=refresh_interval * 60 * 1000, limit=None, key="c2autorefresh")
 
-# Cache folder
 CACHE_DIR = "data_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -74,7 +71,8 @@ def fetch_symbol_tf(args):
         df.set_index('timestamp', inplace=True)
         df.to_csv(get_cache_filename(symbol, tf))
         return symbol, tf, df
-    except:
+    except Exception as e:
+        st.error(f"Failed to fetch {symbol} {tf}: {e}")
         return symbol, tf, None
 
 def load_from_cache(symbol, timeframe):
@@ -90,22 +88,32 @@ def get_tradingview_url(symbol: str, timeframe: str) -> str:
     interval = interval_map.get(timeframe, 'D')
     return f"{base}{tv_symbol}&interval={interval}"
 
-# ========================= SCAN FUNCTION =========================
+# ========================= MAIN SCAN FUNCTION (FIXED) =========================
 def scan_latest_c2():
     results = []
     to_fetch = []
     data_dict = {}
+    cache_missing = False
 
     for symbol in selected_symbols:
         for tf in timeframes:
-            if force_refresh or should_refresh_data(tf):
+            df = load_from_cache(symbol, tf)
+            
+            # NEW LOGIC: Fetch if cache missing OR force refresh OR new candle
+            if force_refresh or df is None or len(df) < 4 or should_refresh_data(tf):
                 to_fetch.append((symbol, tf))
+                if df is None:
+                    cache_missing = True
             else:
-                df = load_from_cache(symbol, tf)
-                if df is not None and len(df) >= 4:
-                    data_dict[(symbol, tf)] = df
+                data_dict[(symbol, tf)] = df
 
-    # Parallel Fetching
+    # Show status
+    if cache_missing:
+        st.info(f"📥 Downloading initial data for {len(to_fetch)} symbol-timeframe pairs... (First run)")
+    elif to_fetch:
+        st.info(f"📥 Fetching new candles for {len(to_fetch)} pairs...")
+
+    # Parallel Fetch
     if to_fetch:
         with ThreadPoolExecutor(max_workers=12) as executor:
             futures = [executor.submit(fetch_symbol_tf, pair) for pair in to_fetch]
@@ -165,14 +173,12 @@ if selected_symbols:
     if not df_results.empty:
         st.success(f"✅ Found **{len(df_results)}** Latest C2 Closure(s)")
 
-        # Make Symbol clickable
         df_display = df_results.copy()
         df_display['Symbol'] = df_display.apply(
             lambda row: f'<a href="{row["View Chart"]}" target="_blank">{row["Symbol"]}</a>', 
             axis=1
         )
 
-        # Display table with colors and links
         st.write(
             df_display.style.applymap(
                 lambda x: 'background-color: #008000' if x == "Bullish C2" else 
@@ -185,10 +191,3 @@ if selected_symbols:
         st.info("No C2 closure detected on the latest closed candles.")
 else:
     st.warning("Please select at least one symbol.")
-
-with st.expander("ℹ️ How It Works"):
-    st.write("""
-    - The app automatically refreshes every X minutes.
-    - It only fetches new data when a new candle closes (4H / Daily / Weekly).
-    - Click on any **Symbol** to open the exact TradingView chart.
-    """)
