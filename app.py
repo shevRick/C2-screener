@@ -4,6 +4,8 @@ import ccxt
 import time
 from datetime import datetime
 import os
+import tempfile
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from streamlit_autorefresh import st_autorefresh
@@ -44,7 +46,7 @@ with st.sidebar:
 
 st_autorefresh(interval=refresh_interval * 60 * 1000, limit=None, key="c2autorefresh")
 
-CACHE_DIR = "data_cache"
+CACHE_DIR = os.path.join(tempfile.gettempdir(), "c2_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 # ========================= HELPERS =========================
