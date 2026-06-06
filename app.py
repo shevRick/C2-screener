@@ -62,14 +62,34 @@ def should_refresh_data(timeframe):
 def fetch_symbol_tf(args):
     symbol, tf = args
     try:
-        exchange = ccxt.binance({'enableRateLimit': True})
+        # Add some delay and user-agent to reduce blocking
+        exchange = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot',
+            },
+            'headers': {
+                'User-Agent': 'Mozilla/5.0'
+            }
+        })
+        
         ohlcv = exchange.fetch_ohlcv(symbol, tf, limit=80)
+        
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
         df.to_csv(get_cache_filename(symbol, tf))
+        
         return symbol, tf, df
+        
     except Exception as e:
+        error_msg = str(e)
+        if "429" in error_msg or "rate limit" in error_msg.lower():
+            return symbol, tf, None  # Rate limit - will retry later
+        elif "403" in error_msg or "forbidden" in error_msg.lower():
+            st.error(f"🚫 Binance blocked request for {symbol} {tf}. Cloud IP may be restricted.")
+        else:
+            st.error(f"❌ Error fetching {symbol} {tf}: {error_msg[:150]}")
         return symbol, tf, None
 
 def load_from_cache(symbol, timeframe):
