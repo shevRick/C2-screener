@@ -62,34 +62,41 @@ def should_refresh_data(timeframe):
 def fetch_symbol_tf(args):
     symbol, tf = args
     try:
-        # Add some delay and user-agent to reduce blocking
-        exchange = ccxt.binance({
-            'enableRateLimit': True,
-            'options': {
-                'defaultType': 'spot',
-            },
-            'headers': {
-                'User-Agent': 'Mozilla/5.0'
-            }
-        })
+        # Use direct public endpoint (more reliable on Streamlit Cloud)
+        base_url = "https://data.binance.com/api/v3/klines"
         
-        ohlcv = exchange.fetch_ohlcv(symbol, tf, limit=80)
+        params = {
+            'symbol': symbol.replace('/', ''),
+            'interval': tf,
+            'limit': 80
+        }
         
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        import requests
+        response = requests.get(base_url, params=params, timeout=15)
+        
+        if response.status_code != 200:
+            st.error(f"HTTP {response.status_code} for {symbol} {tf}")
+            return symbol, tf, None
+            
+        data = response.json()
+        
+        df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 
+                                         'quote_volume', 'trades', 'taker_base', 'taker_quote', 'ignore'])
+        
+        # Keep only needed columns
+        df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].copy()
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
-        df.to_csv(get_cache_filename(symbol, tf))
         
+        # Convert to numeric
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col])
+        
+        df.to_csv(get_cache_filename(symbol, tf))
         return symbol, tf, df
         
     except Exception as e:
-        error_msg = str(e)
-        if "429" in error_msg or "rate limit" in error_msg.lower():
-            return symbol, tf, None  # Rate limit - will retry later
-        elif "403" in error_msg or "forbidden" in error_msg.lower():
-            st.error(f"🚫 Binance blocked request for {symbol} {tf}. Cloud IP may be restricted.")
-        else:
-            st.error(f"❌ Error fetching {symbol} {tf}: {error_msg[:150]}")
+        st.error(f"Failed {symbol} {tf}: {str(e)[:100]}...")
         return symbol, tf, None
 
 def load_from_cache(symbol, timeframe):
