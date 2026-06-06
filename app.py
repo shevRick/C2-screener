@@ -1,35 +1,29 @@
 import streamlit as st
 import pandas as pd
 import ccxt
-import time
 from datetime import datetime
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import tempfile
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
+# Auto Refresh
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="C2 Closure Screener", page_icon="📈", layout="wide")
 
 st.title("🧠 Smart Auto C2 Closure Screener")
-st.markdown("**Auto-refreshes + Clickable TradingView Charts**")
+st.markdown("**Auto-refreshes + Clickable TradingView Charts** | Deployed on Streamlit Cloud")
 
 # ========================= SIDEBAR =========================
 with st.sidebar:
     st.header("Configuration")
     
-    default_symbols = ['BTC/USDT', 'ETH/USDT', 'NEIRO/USDT', 'FLOKI/USDT', 'WLD/USDT', 
-                       'EPIC/USDT', 'ADA/USDT', 'AVAX/USDT', 'SUI/USDT',
-                       'ENA/USDT', 'AR/USDT', 'SUSHI/USDT', 'JTO/USDT', 'VVV/USDT', 
-                       'MEME/USDT', 'SPX/USDT', 'GRASS/USDT', 'ORDI/USDT',  'FET/USDT', 'DODOX/USDT', 'EIGEN/USDT',
-                       'ETHFI/USDT', 'W/USDT', 'HFT/USDT', 'SSV/USDT', 'ONDO/USDT']
+    default_symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT', 
+                       'DOGE/USDT', 'ADA/USDT', 'AVAX/USDT', 'SUI/USDT', 'NEAR/USDT']
     
-    all_symbols = ['BTC/USDT', 'ETH/USDT', 'NEIRO/USDT', 'FLOKI/USDT', 'WLD/USDT', 
-                    'EPIC/USDT', 'ADA/USDT', 'AVAX/USDT', 'SUI/USDT',
-                    'ENA/USDT', 'AR/USDT', 'SUSHI/USDT', 'JTO/USDT', 'VVV/USDT', 
-                    'MEME/USDT', 'SPX/USDT', 'GRASS/USDT', 'ORDI/USDT',  'FET/USDT', 'DODOX/USDT', 'EIGEN/USDT',
-                    'ETHFI/USDT', 'W/USDT', 'HFT/USDT', 'SSV/USDT', 'ONDO/USDT']
+    all_symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT', 'DOGE/USDT',
+                   'ADA/USDT', 'AVAX/USDT', 'TRX/USDT', 'TON/USDT', 'SUI/USDT', 'LINK/USDT',
+                   'DOT/USDT', 'NEAR/USDT', 'PEPE/USDT', 'ARB/USDT', 'OP/USDT']
     
     selected_symbols = st.multiselect("Select Coins", options=all_symbols, default=default_symbols)
     
@@ -40,12 +34,14 @@ with st.sidebar:
     
     col1, col2 = st.columns(2)
     with col1:
-        force_refresh = st.button("Force Full Refresh")
+        force_refresh = st.button("🔄 Force Full Refresh")
     with col2:
         st.info("Auto-refresh is ON")
 
+# Auto Refresh
 st_autorefresh(interval=refresh_interval * 60 * 1000, limit=None, key="c2autorefresh")
 
+# Use temporary directory (Important for Streamlit Cloud)
 CACHE_DIR = os.path.join(tempfile.gettempdir(), "c2_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -74,7 +70,6 @@ def fetch_symbol_tf(args):
         df.to_csv(get_cache_filename(symbol, tf))
         return symbol, tf, df
     except Exception as e:
-        st.error(f"Failed to fetch {symbol} {tf}: {e}")
         return symbol, tf, None
 
 def load_from_cache(symbol, timeframe):
@@ -90,30 +85,27 @@ def get_tradingview_url(symbol: str, timeframe: str) -> str:
     interval = interval_map.get(timeframe, 'D')
     return f"{base}{tv_symbol}&interval={interval}"
 
-# ========================= MAIN SCAN FUNCTION (FIXED) =========================
+# ========================= SCAN FUNCTION =========================
 def scan_latest_c2():
     results = []
     to_fetch = []
     data_dict = {}
-    cache_missing = False
+    is_first_run = False
 
     for symbol in selected_symbols:
         for tf in timeframes:
             df = load_from_cache(symbol, tf)
             
-            # NEW LOGIC: Fetch if cache missing OR force refresh OR new candle
             if force_refresh or df is None or len(df) < 4 or should_refresh_data(tf):
                 to_fetch.append((symbol, tf))
                 if df is None:
-                    cache_missing = True
+                    is_first_run = True
             else:
                 data_dict[(symbol, tf)] = df
 
-    # Show status
-    if cache_missing:
-        st.info(f"📥 Downloading initial data for {len(to_fetch)} symbol-timeframe pairs... (First run)")
-    elif to_fetch:
-        st.info(f"📥 Fetching new candles for {len(to_fetch)} pairs...")
+    # Show status message
+    if is_first_run and to_fetch:
+        st.info(f"📥 First run: Downloading data for {len(to_fetch)} symbol-timeframe pairs...")
 
     # Parallel Fetch
     if to_fetch:
@@ -193,3 +185,11 @@ if selected_symbols:
         st.info("No C2 closure detected on the latest closed candles.")
 else:
     st.warning("Please select at least one symbol.")
+
+with st.expander("ℹ️ How It Works"):
+    st.write("""
+    - First run will download data for all selected symbols.
+    - Subsequent refreshes use cache when possible.
+    - Only fetches new data after a new 4H / Daily / Weekly candle closes.
+    - Click any **Symbol** to open TradingView chart.
+    """)
