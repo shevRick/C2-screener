@@ -91,6 +91,7 @@ def scan_latest_c2():
     to_fetch = []
     data_dict = {}
     is_first_run = False
+    debug_info = []
 
     for symbol in selected_symbols:
         for tf in timeframes:
@@ -103,7 +104,6 @@ def scan_latest_c2():
             else:
                 data_dict[(symbol, tf)] = df
 
-    # Show status message
     if is_first_run and to_fetch:
         st.info(f"📥 First run: Downloading data for {len(to_fetch)} symbol-timeframe pairs...")
 
@@ -115,12 +115,15 @@ def scan_latest_c2():
                 symbol, tf, df = future.result()
                 if df is not None:
                     data_dict[(symbol, tf)] = df
+                else:
+                    debug_info.append(f"❌ Failed to fetch {symbol} {tf}")
 
-    # Scan for C2
+    # ==================== SCAN WITH DEBUG ====================
     for symbol in selected_symbols:
         for tf in timeframes:
             df = data_dict.get((symbol, tf))
             if df is None or len(df) < 4:
+                debug_info.append(f"⚠️ Not enough data: {symbol} {tf} (rows: {len(df) if df is not None else 0})")
                 continue
 
             i = len(df) - 1
@@ -133,13 +136,18 @@ def scan_latest_c2():
                 continue
 
             c2_type = None
+            sweep_pct = None
+
+            # Bullish C2
             if c2['low'] < c1['low']:
-                sweep_pct = (c1['low'] - c2['low']) / prev_range
-                if sweep_pct >= min_sweep and c2['close'] > c1['low']:
+                sweep_pct = (c1['low'] - c2['low']) / prev_range * 100
+                if sweep_pct >= (min_sweep * 100) and c2['close'] > c1['low']:
                     c2_type = "Bullish C2"
+            
+            # Bearish C2
             elif c2['high'] > c1['high']:
-                sweep_pct = (c2['high'] - c1['high']) / prev_range
-                if sweep_pct >= min_sweep and c2['close'] < c1['high']:
+                sweep_pct = (c2['high'] - c1['high']) / prev_range * 100
+                if sweep_pct >= (min_sweep * 100) and c2['close'] < c1['high']:
                     c2_type = "Bearish C2"
 
             if c2_type:
@@ -152,8 +160,19 @@ def scan_latest_c2():
                     'C2 Close': round(float(c2['close']), 4),
                     'Current Price': round(float(c3['close']), 4),
                     '% Change': round((c3['close'] - c2['close']) / c2['close'] * 100, 2),
+                    'Sweep %': round(sweep_pct, 2),
                     'View Chart': tv_url
                 })
+            else:
+                # Debug: Show why it didn't trigger
+                if sweep_pct:
+                    debug_info.append(f"No C2: {symbol} {tf} | Sweep = {round(sweep_pct,2)}% (Min required: {min_sweep*100}%)")
+
+    # Show debug info in expander
+    if debug_info:
+        with st.expander("🔍 Debug Information (Why no signals?)", expanded=True):
+            for msg in debug_info[:20]:   # Show first 20 messages
+                st.write(msg)
 
     return pd.DataFrame(results)
 
